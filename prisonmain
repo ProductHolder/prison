@@ -41,7 +41,7 @@ Gui.Parent = PlayerGui
 
 Main = Instance.new("Frame")
 Main.Name = "SourceX"
-Main.Size = UDim2.fromOffset(900, 600)
+Main.Size = UDim2.fromOffset(950, 700)
 Main.Position = UDim2.fromScale(0.5, 0.5)
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.BackgroundColor3 = Theme.Background
@@ -104,17 +104,25 @@ Close.Font = Enum.Font.GothamMedium
 Close.AutoButtonColor = false
 Close.Parent = Main
 
-Tabs = Instance.new("Frame")
+Tabs = Instance.new("ScrollingFrame")
 Tabs.Name = "Tabs"
 Tabs.Size = UDim2.new(1, -20, 1, -135)
 Tabs.Position = UDim2.fromOffset(10, 75)
 Tabs.BackgroundTransparency = 1
+Tabs.BorderSizePixel = 0
+Tabs.ScrollBarThickness = 3
+Tabs.ScrollBarImageColor3 = Theme.Accent
+Tabs.CanvasSize = UDim2.new(0, 0, 0, 0)
 Tabs.Parent = Sidebar
 
 TabLayout = Instance.new("UIListLayout")
 TabLayout.Padding = UDim.new(0, 6)
 TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 TabLayout.Parent = Tabs
+
+TabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	Tabs.CanvasSize = UDim2.fromOffset(0, TabLayout.AbsoluteContentSize.Y + 10)
+end)
 
 DangerButton = Instance.new("TextButton")
 DangerButton.Name = "Danger"
@@ -1124,6 +1132,7 @@ CreateTab("Legit")
 CreateTab("Visuals")
 CreateTab("Misc")
 CreateTab("Gun Mods")
+CreateTab("Locations")
 
 CreateDivider()
 
@@ -1134,114 +1143,182 @@ CreateDivider()
 CreateTab("Players")
 CreateTab("Music")
 
-MP5Enabled = false
-MP5BulletTracersEnabled = false
-MP5InfiniteAmmoEnabled = false
-MP5TracerThickness = 0.15
-MP5TracerOpacity = 0.3
-MP5TracerColor = Color3.fromRGB(255, 255, 0)
-MP5Connections = {}
-ActiveMP5 = nil
-MP5Firing = false
-MP5FeatureGroup = {}
-MP5TracerSettings = {}
+UniversalGun = {
+	ModifyEnabled = false,
+	TracerEnabled = false,
+	InfiniteAmmo = false,
+	InfiniteRange = false,
+	NoSpread = false,
+	InstantReload = false,
+	FastFireRateEnabled = false,
+	FastFireRate = 0.05,
+	Wallbang = false,
+	TracerLifetime = 1,
+	TracerThickness = 0.15,
+	TracerOpacity = 0.3,
+	TracerColor = Color3.fromRGB(255, 255, 0),
+	EquippedGun = nil,
+	Firing = false,
+	Connections = {},
+	TracerSettings = {},
+	FireRateSettings = {},
+	FeatureGroup = {}
+}
 
-function DisconnectMP5Connections()
-	for _, Connection in ipairs(MP5Connections) do
+function DisconnectUniversalGun()
+	for _, Connection in ipairs(UniversalGun.Connections) do
 		pcall(function()
 			Connection:Disconnect()
 		end)
 	end
 
-	table.clear(MP5Connections)
-	ActiveMP5 = nil
-	MP5Firing = false
+	table.clear(UniversalGun.Connections)
+	UniversalGun.EquippedGun = nil
+	UniversalGun.Firing = false
 end
 
-function FindLocalMP5()
+function GetEquippedGun()
 	local Character = Player.Character
 
-	if Character then
-		local Tool = Character:FindFirstChild("MP5")
-		if Tool and Tool:IsA("Tool") then
-			return Tool
-		end
+	if not Character then
+		return nil
 	end
 
-	local Backpack = Player:FindFirstChildOfClass("Backpack")
-
-	if Backpack then
-		local Tool = Backpack:FindFirstChild("MP5")
-		if Tool and Tool:IsA("Tool") then
-			return Tool
+	for _, Object in ipairs(Character:GetChildren()) do
+		if Object:IsA("Tool") and Object:GetAttribute("ToolType") == "Gun" then
+			return Object
 		end
 	end
 
 	return nil
 end
 
-function ApplyMP5InfiniteAmmo(MP5)
-	if not MP5InfiniteAmmoEnabled or not MP5 then
-		return
-	end
-
-	pcall(function()
-		MP5:SetAttribute("MaxAmmo", 100)
-		MP5:SetAttribute("CurrentAmmo", 100)
-		MP5:SetAttribute("Local_CurrentAmmo", 100)
-	end)
+function IsUniversalGun(Tool)
+	return Tool
+		and Tool:IsA("Tool")
+		and Tool:GetAttribute("ToolType") == "Gun"
 end
 
-function CreateMP5Tracer(MP5)
-	if not MP5Enabled or not MP5BulletTracersEnabled then
-		return
+function GetUniversalMuzzle(Tool)
+	if not Tool then
+		return nil
 	end
 
-	if not MP5 or not MP5:IsDescendantOf(game) then
-		return
+	local Muzzle = Tool:FindFirstChild("Muzzle", true)
+
+	if Muzzle and Muzzle:IsA("BasePart") then
+		return Muzzle
 	end
 
-	if FindLocalMP5() ~= MP5 then
-		return
-	end
+	return nil
+end
 
-	if MP5:GetAttribute("IsReloading") == true then
-		return
-	end
-
-	local Muzzle = MP5:FindFirstChild("Muzzle", true)
-
-	if not Muzzle or not Muzzle:IsA("BasePart") then
-		return
-	end
-
+function GetUniversalMousePosition()
 	local Mouse = Player:GetMouse()
-	local StartPosition = Muzzle.Position
-	local EndPosition = Mouse.Hit.Position
+
+	if Mouse and Mouse.Hit then
+		return Mouse.Hit.Position
+	end
+
+	local Camera = workspace.CurrentCamera
+
+	if Camera then
+		return Camera.CFrame.Position + Camera.CFrame.LookVector * 1000
+	end
+
+	return nil
+end
+
+function GetUniversalSpreadDirection(StartPosition, EndPosition, SpreadRadius)
 	local Direction = EndPosition - StartPosition
-	local Distance = Direction.Magnitude
+
+	if Direction.Magnitude <= 0 then
+		return nil
+	end
+
+	Direction = Direction.Unit
+
+	if typeof(SpreadRadius) ~= "number" or SpreadRadius <= 0 then
+		return Direction
+	end
+
+	local Camera = workspace.CurrentCamera
+
+	if not Camera then
+		return Direction
+	end
+
+	local Right = Camera.CFrame.RightVector
+	local Up = Camera.CFrame.UpVector
+	local OffsetX = (math.random() - 0.5) * SpreadRadius
+	local OffsetY = (math.random() - 0.5) * SpreadRadius
+	local SpreadDirection = Direction + Right * OffsetX + Up * OffsetY
+
+	if SpreadDirection.Magnitude <= 0 then
+		return Direction
+	end
+
+	return SpreadDirection.Unit
+end
+
+function CreateUniversalTracer(Tool, Direction)
+	if not UniversalGun.ModifyEnabled or not UniversalGun.TracerEnabled then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	if Tool:GetAttribute("IsReloading") == true then
+		return
+	end
+
+	local Muzzle = GetUniversalMuzzle(Tool)
+
+	if not Muzzle then
+		return
+	end
+
+	local Range = Tool:GetAttribute("Range")
+
+	if UniversalGun.InfiniteRange then
+		Range = 1000000000
+	end
+
+	if typeof(Range) ~= "number" or Range <= 0 then
+		Range = 1000
+	end
+
+	local StartPosition = Muzzle.Position
+	local EndPosition = StartPosition + Direction * Range
+	local Distance = (EndPosition - StartPosition).Magnitude
 
 	if Distance <= 0 then
 		return
 	end
 
 	local Tracer = Instance.new("Part")
-	Tracer.Name = "SourceX_MP5Tracer"
+	Tracer.Name = "SourceXUniversalTracer"
 	Tracer.Anchored = true
 	Tracer.CanCollide = false
-	Tracer.CanQuery = false
 	Tracer.CanTouch = false
+	Tracer.CanQuery = false
 	Tracer.CastShadow = false
 	Tracer.Material = Enum.Material.Neon
-	Tracer.Color = MP5TracerColor
-	Tracer.Transparency = math.clamp(MP5TracerOpacity, 0, 1)
-	Tracer.Size = Vector3.new(MP5TracerThickness, MP5TracerThickness, Distance)
+	Tracer.Color = UniversalGun.TracerColor
+	Tracer.Transparency = math.clamp(UniversalGun.TracerOpacity, 0, 1)
+	Tracer.Size = Vector3.new(
+		UniversalGun.TracerThickness,
+		UniversalGun.TracerThickness,
+		Distance
+	)
 	Tracer.CFrame = CFrame.lookAt(StartPosition, EndPosition) * CFrame.new(0, 0, -Distance / 2)
 	Tracer.Parent = workspace
 
 	local Fade = TweenService:Create(
 		Tracer,
-		TweenInfo.new(1, Enum.EasingStyle.Linear),
+		TweenInfo.new(UniversalGun.TracerLifetime, Enum.EasingStyle.Linear),
 		{Transparency = 1}
 	)
 
@@ -1254,34 +1331,93 @@ function CreateMP5Tracer(MP5)
 	end)
 end
 
-function StopMP5TracerLoop()
-	MP5Firing = false
-end
-
-function StartMP5TracerLoop(MP5)
-	if MP5Firing then
+function FireUniversalGunVisuals(Tool)
+	if not UniversalGun.ModifyEnabled or not UniversalGun.TracerEnabled then
 		return
 	end
 
-	MP5Firing = true
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	if Tool:GetAttribute("IsReloading") == true then
+		return
+	end
+
+	local Muzzle = GetUniversalMuzzle(Tool)
+
+	if not Muzzle then
+		return
+	end
+
+	local TargetPosition = GetUniversalMousePosition()
+
+	if not TargetPosition then
+		return
+	end
+
+	local Behavior = Tool:GetAttribute("Behavior")
+	local ProjectileCount = Tool:GetAttribute("ProjectileCount")
+	local SpreadRadius = UniversalGun.NoSpread and 0 or (Tool:GetAttribute("SpreadRadius") or 0)
+
+	if Behavior == "Shotgun" or (typeof(ProjectileCount) == "number" and ProjectileCount > 1) then
+		ProjectileCount = math.max(1, math.floor(ProjectileCount))
+
+		for _ = 1, ProjectileCount do
+			local Direction = GetUniversalSpreadDirection(
+				Muzzle.Position,
+				TargetPosition,
+				SpreadRadius
+			)
+
+			if Direction then
+				CreateUniversalTracer(Tool, Direction)
+			end
+		end
+
+		return
+	end
+
+	local Direction = GetUniversalSpreadDirection(
+		Muzzle.Position,
+		TargetPosition,
+		SpreadRadius
+	)
+
+	if Direction then
+		CreateUniversalTracer(Tool, Direction)
+	end
+end
+
+function StopUniversalGunFire()
+	UniversalGun.Firing = false
+end
+
+function StartUniversalAutoLoop(Tool)
+	if UniversalGun.Firing then
+		return
+	end
+
+	UniversalGun.Firing = true
 
 	task.spawn(function()
-		while MP5Firing and MP5Enabled and MP5BulletTracersEnabled do
-			if not MP5 or not MP5:IsDescendantOf(game) then
+		while UniversalGun.Firing
+			and UniversalGun.ModifyEnabled
+			and UniversalGun.TracerEnabled
+			and Tool
+			and Tool.Parent == Player.Character do
+
+			if Tool:GetAttribute("IsReloading") == true then
 				break
 			end
 
-			if FindLocalMP5() ~= MP5 then
-				break
+			FireUniversalGunVisuals(Tool)
+
+			local FireRate = Tool:GetAttribute("FireRate")
+
+			if UniversalGun.FastFireRateEnabled then
+				FireRate = UniversalGun.FastFireRate
 			end
-
-			if MP5:GetAttribute("IsReloading") == true then
-				break
-			end
-
-			CreateMP5Tracer(MP5)
-
-			local FireRate = MP5:GetAttribute("FireRate")
 
 			if typeof(FireRate) ~= "number" or FireRate <= 0 then
 				FireRate = 0.1
@@ -1290,128 +1426,311 @@ function StartMP5TracerLoop(MP5)
 			task.wait(FireRate)
 		end
 
-		MP5Firing = false
+		UniversalGun.Firing = false
 	end)
 end
 
-function SetupLocalMP5(MP5)
-	if not MP5 or not MP5:IsA("Tool") then
+function ApplyUniversalAmmo(Tool)
+	if not UniversalGun.InfiniteAmmo then
 		return
 	end
 
-	if ActiveMP5 == MP5 then
-		ApplyMP5InfiniteAmmo(MP5)
+	if not IsUniversalGun(Tool) then
 		return
 	end
 
-	DisconnectMP5Connections()
-	ActiveMP5 = MP5
+	pcall(function()
+		Tool:SetAttribute("MaxAmmo", 100)
+		Tool:SetAttribute("CurrentAmmo", 100)
+	end)
 
-	table.insert(MP5Connections, MP5.Activated:Connect(function()
-		if not MP5Enabled or not MP5BulletTracersEnabled then
+	if Tool:GetAttribute("Local_CurrentAmmo") ~= nil then
+		pcall(function()
+			Tool:SetAttribute("Local_CurrentAmmo", 100)
+		end)
+	end
+end
+
+function ApplyUniversalRange(Tool)
+	if not UniversalGun.InfiniteRange then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	pcall(function()
+		Tool:SetAttribute("Range", 1000000000)
+		Tool:SetAttribute("AccurateRange", 1000000000)
+	end)
+end
+
+function ApplyUniversalNoSpread(Tool)
+	if not UniversalGun.NoSpread then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	pcall(function()
+		Tool:SetAttribute("SpreadRadius", 0)
+	end)
+end
+
+function ApplyUniversalReload(Tool)
+	if not UniversalGun.InstantReload then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	pcall(function()
+		Tool:SetAttribute("ReloadTime", 0)
+	end)
+end
+
+function ApplyUniversalFireRate(Tool)
+	if not UniversalGun.FastFireRateEnabled then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	pcall(function()
+		Tool:SetAttribute("FireRate", UniversalGun.FastFireRate)
+	end)
+end
+
+function ApplyUniversalWallbang(Tool)
+	if not UniversalGun.Wallbang then
+		return
+	end
+
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	pcall(function()
+		Tool:SetAttribute("Wallbang", true)
+		Tool:SetAttribute("WallbangDepth", 1000)
+	end)
+end
+
+function SetupUniversalGun(Tool)
+	if not IsUniversalGun(Tool) then
+		return
+	end
+
+	if UniversalGun.EquippedGun == Tool then
+		ApplyUniversalAmmo(Tool)
+		ApplyUniversalRange(Tool)
+		ApplyUniversalNoSpread(Tool)
+		ApplyUniversalReload(Tool)
+		ApplyUniversalFireRate(Tool)
+		ApplyUniversalWallbang(Tool)
+		return
+	end
+
+	DisconnectUniversalGun()
+	UniversalGun.EquippedGun = Tool
+
+	table.insert(UniversalGun.Connections, Tool.Activated:Connect(function()
+		if not UniversalGun.ModifyEnabled or not UniversalGun.TracerEnabled then
 			return
 		end
 
-		if MP5:GetAttribute("IsReloading") == true then
+		if Tool:GetAttribute("IsReloading") == true then
 			return
 		end
 
-		StartMP5TracerLoop(MP5)
-	end))
-
-	table.insert(MP5Connections, MP5.Deactivated:Connect(function()
-		StopMP5TracerLoop()
-	end))
-
-	table.insert(MP5Connections, MP5:GetAttributeChangedSignal("IsReloading"):Connect(function()
-		if MP5:GetAttribute("IsReloading") == true then
-			StopMP5TracerLoop()
+		if Tool:GetAttribute("AutoFire") == true then
+			StartUniversalAutoLoop(Tool)
+		else
+			FireUniversalGunVisuals(Tool)
 		end
 	end))
 
-	table.insert(MP5Connections, MP5:GetAttributeChangedSignal("CurrentAmmo"):Connect(function()
-		if MP5InfiniteAmmoEnabled then
+	table.insert(UniversalGun.Connections, Tool.Deactivated:Connect(function()
+		StopUniversalGunFire()
+	end))
+
+	table.insert(UniversalGun.Connections, Tool.Unequipped:Connect(function()
+		StopUniversalGunFire()
+		if UniversalGun.EquippedGun == Tool then
+			UniversalGun.EquippedGun = nil
+		end
+	end))
+
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("IsReloading"):Connect(function()
+		if Tool:GetAttribute("IsReloading") == true then
+			StopUniversalGunFire()
+		end
+	end))
+
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("CurrentAmmo"):Connect(function()
+		if UniversalGun.InfiniteAmmo then
 			task.defer(function()
-				ApplyMP5InfiniteAmmo(MP5)
+				ApplyUniversalAmmo(Tool)
 			end)
 		end
 	end))
 
-	table.insert(MP5Connections, MP5:GetAttributeChangedSignal("Local_CurrentAmmo"):Connect(function()
-		if MP5InfiniteAmmoEnabled then
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("MaxAmmo"):Connect(function()
+		if UniversalGun.InfiniteAmmo then
 			task.defer(function()
-				ApplyMP5InfiniteAmmo(MP5)
+				ApplyUniversalAmmo(Tool)
 			end)
 		end
 	end))
 
-	table.insert(MP5Connections, MP5:GetAttributeChangedSignal("MaxAmmo"):Connect(function()
-		if MP5InfiniteAmmoEnabled then
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("SpreadRadius"):Connect(function()
+		if UniversalGun.NoSpread then
 			task.defer(function()
-				ApplyMP5InfiniteAmmo(MP5)
+				ApplyUniversalNoSpread(Tool)
 			end)
 		end
 	end))
 
-	table.insert(MP5Connections, MP5.AncestryChanged:Connect(function()
-		if not MP5:IsDescendantOf(game) then
-			StopMP5TracerLoop()
-			if ActiveMP5 == MP5 then
-				ActiveMP5 = nil
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("ReloadTime"):Connect(function()
+		if UniversalGun.InstantReload then
+			task.defer(function()
+				ApplyUniversalReload(Tool)
+			end)
+		end
+	end))
+
+	table.insert(UniversalGun.Connections, Tool:GetAttributeChangedSignal("FireRate"):Connect(function()
+		if UniversalGun.FastFireRateEnabled then
+			task.defer(function()
+				ApplyUniversalFireRate(Tool)
+			end)
+		end
+	end))
+
+	table.insert(UniversalGun.Connections, Tool.AncestryChanged:Connect(function()
+		if not Tool:IsDescendantOf(game) then
+			StopUniversalGunFire()
+			if UniversalGun.EquippedGun == Tool then
+				UniversalGun.EquippedGun = nil
 			end
 		end
 	end))
 
-	ApplyMP5InfiniteAmmo(MP5)
+	ApplyUniversalAmmo(Tool)
+	ApplyUniversalRange(Tool)
+	ApplyUniversalNoSpread(Tool)
+	ApplyUniversalReload(Tool)
+	ApplyUniversalFireRate(Tool)
+	ApplyUniversalWallbang(Tool)
 end
 
-function RefreshLocalMP5()
-	local MP5 = FindLocalMP5()
-	if MP5 then
-		SetupLocalMP5(MP5)
+function RefreshUniversalGun()
+	local Tool = GetEquippedGun()
+
+	if Tool then
+		SetupUniversalGun(Tool)
+	else
+		DisconnectUniversalGun()
 	end
 end
 
-function SetMP5FeaturesVisible(Value)
-	setGroupVisible(MP5FeatureGroup, Value)
-	setGroupVisible(MP5TracerSettings, Value and MP5BulletTracersEnabled)
+function SetUniversalGunSettingsVisible(Value)
+	setGroupVisible(UniversalGun.FeatureGroup, Value)
+	setGroupVisible(UniversalGun.TracerSettings, Value and UniversalGun.TracerEnabled)
+	setGroupVisible(UniversalGun.FireRateSettings, Value and UniversalGun.FastFireRateEnabled)
 end
 
-GunModsSection = AddSection and AddSection("Gun Mods", "MP5")
+GunModsSection = AddSection("Gun Mods", "Gun mods")
 
-ModifyMP5Toggle = addSettingToggle(
+ModifyUniversalGunToggle = addSettingToggle(
 	Pages["Gun Mods"],
-	"Modify MP5",
+	"Modify Guns",
 	false,
 	function(Value)
-		MP5Enabled = Value
-		SetMP5FeaturesVisible(Value)
+		UniversalGun.ModifyEnabled = Value
+		SetUniversalGunSettingsVisible(Value)
 
 		if not Value then
-			StopMP5TracerLoop()
+			StopUniversalGunFire()
+			UniversalGun.TracerEnabled = false
+			UniversalGun.InfiniteAmmo = false
+			UniversalGun.InfiniteRange = false
+			UniversalGun.NoSpread = false
+			UniversalGun.InstantReload = false
+			UniversalGun.FastFireRateEnabled = false
+			UniversalGun.Wallbang = false
+
+			if BulletTracerToggle then
+				BulletTracerToggle.Set(false)
+			end
+
+			if UniversalInfAmmoToggle then
+				UniversalInfAmmoToggle.Set(false)
+			end
+
+			if UniversalInfRangeToggle then
+				UniversalInfRangeToggle.Set(false)
+			end
+
+			if UniversalNoSpreadToggle then
+				UniversalNoSpreadToggle.Set(false)
+			end
+
+			if UniversalInstantReloadToggle then
+				UniversalInstantReloadToggle.Set(false)
+			end
+
+			if UniversalFastFireToggle then
+				UniversalFastFireToggle.Set(false)
+			end
+
+			if UniversalWallbangToggle then
+				UniversalWallbangToggle.Set(false)
+			end
 		end
 
-		RefreshLocalMP5()
+		RefreshUniversalGun()
 	end
 )
 
-MP5BulletTracerToggle = addSettingToggle(
+BulletTracerToggle = addSettingToggle(
 	Pages["Gun Mods"],
 	"Bullet Tracers",
 	false,
 	function(Value)
-		MP5BulletTracersEnabled = Value
-		setGroupVisible(MP5TracerSettings, MP5Enabled and Value)
+		UniversalGun.TracerEnabled = Value
+		setGroupVisible(UniversalGun.TracerSettings, UniversalGun.ModifyEnabled and Value)
 
 		if not Value then
-			StopMP5TracerLoop()
+			StopUniversalGunFire()
 		end
 	end
 )
 
-table.insert(MP5FeatureGroup, MP5BulletTracerToggle.Frame)
+UniversalGun.FeatureGroup = {
+	BulletTracerToggle.Frame
+}
 
-table.insert(MP5TracerSettings, addSlider(
+table.insert(UniversalGun.TracerSettings, addSlider(
+	Pages["Gun Mods"],
+	"Lifetime",
+	0.1,
+	3,
+	1,
+	2,
+	function(Value)
+		UniversalGun.TracerLifetime = Value
+	end
+))
+
+table.insert(UniversalGun.TracerSettings, addSlider(
 	Pages["Gun Mods"],
 	"Thickness",
 	0.05,
@@ -1419,11 +1738,11 @@ table.insert(MP5TracerSettings, addSlider(
 	0.15,
 	2,
 	function(Value)
-		MP5TracerThickness = Value
+		UniversalGun.TracerThickness = Value
 	end
 ))
 
-table.insert(MP5TracerSettings, addSlider(
+table.insert(UniversalGun.TracerSettings, addSlider(
 	Pages["Gun Mods"],
 	"Opacity",
 	0,
@@ -1431,81 +1750,365 @@ table.insert(MP5TracerSettings, addSlider(
 	0.3,
 	2,
 	function(Value)
-		MP5TracerOpacity = Value
+		UniversalGun.TracerOpacity = Value
 	end
 ))
 
-table.insert(MP5TracerSettings, addColorPicker(
+table.insert(UniversalGun.TracerSettings, addColorPicker(
 	Pages["Gun Mods"],
 	"Color",
-	MP5TracerColor,
+	UniversalGun.TracerColor,
 	function(Value)
-		MP5TracerColor = Value
+		UniversalGun.TracerColor = Value
 	end
 ))
 
-MP5InfAmmoToggle = addSettingToggle(
+UniversalInfAmmoToggle = addSettingToggle(
 	Pages["Gun Mods"],
 	"Inf Ammo",
 	false,
 	function(Value)
-		MP5InfiniteAmmoEnabled = Value
+		UniversalGun.InfiniteAmmo = Value
 
 		if Value then
-			local MP5 = FindLocalMP5()
-			if MP5 then
-				ApplyMP5InfiniteAmmo(MP5)
+			ApplyUniversalAmmo(GetEquippedGun())
+		end
+	end
+)
+
+table.insert(UniversalGun.FeatureGroup, UniversalInfAmmoToggle.Frame)
+
+UniversalInfRangeToggle = addSettingToggle(
+	Pages["Gun Mods"],
+	"Inf Range",
+	false,
+	function(Value)
+		UniversalGun.InfiniteRange = Value
+
+		if Value then
+			ApplyUniversalRange(GetEquippedGun())
+		end
+	end
+)
+
+table.insert(UniversalGun.FeatureGroup, UniversalInfRangeToggle.Frame)
+
+UniversalNoSpreadToggle = addSettingToggle(
+	Pages["Gun Mods"],
+	"No Spread",
+	false,
+	function(Value)
+		UniversalGun.NoSpread = Value
+
+		local Tool = GetEquippedGun()
+
+		if Value then
+			ApplyUniversalNoSpread(Tool)
+		end
+	end
+)
+
+table.insert(UniversalGun.FeatureGroup, UniversalNoSpreadToggle.Frame)
+
+UniversalInstantReloadToggle = addSettingToggle(
+	Pages["Gun Mods"],
+	"Instant Reload",
+	false,
+	function(Value)
+		UniversalGun.InstantReload = Value
+
+		local Tool = GetEquippedGun()
+
+		if Value then
+			ApplyUniversalReload(Tool)
+		end
+	end
+)
+
+table.insert(UniversalGun.FeatureGroup, UniversalInstantReloadToggle.Frame)
+
+UniversalFastFireToggle = addSettingToggle(
+	Pages["Gun Mods"],
+	"Fast Fire Rate",
+	false,
+	function(Value)
+		UniversalGun.FastFireRateEnabled = Value
+		setGroupVisible(UniversalGun.FireRateSettings, UniversalGun.ModifyEnabled and Value)
+
+		local Tool = GetEquippedGun()
+
+		if Value then
+			ApplyUniversalFireRate(Tool)
+		end
+	end
+)
+
+table.insert(UniversalGun.FeatureGroup, UniversalFastFireToggle.Frame)
+
+table.insert(UniversalGun.FireRateSettings, addSlider(
+	Pages["Gun Mods"],
+	"Fire Rate",
+	0.01,
+	1,
+	0.05,
+	2,
+	function(Value)
+		UniversalGun.FastFireRate = Value
+
+		if UniversalGun.FastFireRateEnabled then
+			ApplyUniversalFireRate(GetEquippedGun())
+		end
+	end
+))
+
+UniversalWallbangToggle = addSettingToggle(
+	Pages["Gun Mods"],
+	"Wallbang",
+	false,
+	function(Value)
+		UniversalGun.Wallbang = Value
+
+		local Tool = GetEquippedGun()
+
+		if Value then
+			ApplyUniversalWallbang(Tool)
+		else
+			if IsUniversalGun(Tool) then
+				pcall(function()
+					Tool:SetAttribute("Wallbang", false)
+				end)
 			end
 		end
 	end
 )
 
-table.insert(MP5FeatureGroup, MP5InfAmmoToggle.Frame)
+table.insert(UniversalGun.FeatureGroup, UniversalWallbangToggle.Frame)
 
-setGroupVisible(MP5FeatureGroup, false)
-setGroupVisible(MP5TracerSettings, false)
+setGroupVisible(UniversalGun.FeatureGroup, false)
+setGroupVisible(UniversalGun.TracerSettings, false)
+setGroupVisible(UniversalGun.FireRateSettings, false)
 
-MP5Info = Instance.new("TextLabel")
-MP5Info.Size = UDim2.new(1, -10, 0, 60)
-MP5Info.BackgroundTransparency = 1
-MP5Info.Text = "MP5 modifications only affect your local MP5. Enable Modify MP5 to reveal the available options."
-MP5Info.TextColor3 = Theme.SubText
-MP5Info.TextSize = 13
-MP5Info.Font = Enum.Font.Gotham
-MP5Info.TextWrapped = true
-MP5Info.TextXAlignment = Enum.TextXAlignment.Left
-MP5Info.Parent = Pages["Gun Mods"]
+UniversalGunInfo = Instance.new("TextLabel")
+UniversalGunInfo.Size = UDim2.new(1, -10, 0, 80)
+UniversalGunInfo.BackgroundTransparency = 1
+UniversalGunInfo.Text = "Make sure you re-equip your gun when you toggle and edit these mods"
+UniversalGunInfo.TextColor3 = Theme.SubText
+UniversalGunInfo.TextSize = 13
+UniversalGunInfo.Font = Enum.Font.Gotham
+UniversalGunInfo.TextWrapped = true
+UniversalGunInfo.TextXAlignment = Enum.TextXAlignment.Left
+UniversalGunInfo.Parent = Pages["Gun Mods"]
 
-BackpackForMP5 = Player:WaitForChild("Backpack")
+AddSection("Locations", "Spawns")
 
-table.insert(Connections, BackpackForMP5.ChildAdded:Connect(function(Child)
-	if Child:IsA("Tool") and Child.Name == "MP5" then
-		task.wait()
-		RefreshLocalMP5()
+local LocationData = {
+	{
+		Name = "Police Spawn",
+		Category = "Spawns",
+		Position = Vector3.new(800.99, 97.04, 2299.10)
+	},
+	{
+		Name = "Criminal Spawn",
+		Category = "Spawns",
+		Position = Vector3.new(-975.10, 105.22, 2057.90)
+	},
+	{
+		Name = "Prisoner Spawn - Cells",
+		Category = "Spawns",
+		Position = Vector3.new(916.75, 97.13, 2435.40)
+	},
+	{
+		Name = "Prisoner Spawn - Cafeteria",
+		Category = "Spawns",
+		Position = Vector3.new(948.65, 97.09, 2325.45)
+	},
+	{
+		Name = "Prisoner Spawn - Courtyard 1",
+		Category = "Spawns",
+		Position = Vector3.new(841.95, 95.20, 2478.20)
+	},
+	{
+		Name = "Prisoner Spawn - Courtyard 2",
+		Category = "Spawns",
+		Position = Vector3.new(740.68, 95.24, 2528.65)
+	},
+	{
+		Name = "Prisoner Spawn - Courtyard 3",
+		Category = "Spawns",
+		Position = Vector3.new(841.95, 95.20, 2428.90)
+	},
+	{
+		Name = "Prisoner Spawn - Nexus",
+		Category = "Spawns",
+		Position = Vector3.new(915.30, 97.14, 2388.00)
+	},
+	{
+		Name = "Neutral Spawn",
+		Category = "Spawns",
+		Position = Vector3.new(871.90, 36.09, 2343.55)
+	},
+	{
+		Name = "Prison",
+		Category = "Main Locations",
+		Position = Vector3.new(843.43, 96.14, 2430.59)
+	},
+	{
+		Name = "Police Station",
+		Category = "Main Locations",
+		Position = Vector3.new(800.99, 97.04, 2299.10)
+	},
+	{
+		Name = "Prison Yard",
+		Category = "Main Locations",
+		Position = Vector3.new(759.43, 95.14, 2497.28)
+	},
+	{
+		Name = "Cafeteria",
+		Category = "Main Locations",
+		Position = Vector3.new(981.25, 96.93, 2339.25)
+	},
+	{
+		Name = "Gun Store",
+		Category = "Main Locations",
+		Position = Vector3.new(371.63, 13.83, 1137.03)
+	},
+	{
+		Name = "Sewer",
+		Category = "Main Locations",
+		Position = Vector3.new(916.80, 82.28, 2270.60)
+	},
+	{
+		Name = "Tunnel",
+		Category = "Main Locations",
+		Position = Vector3.new(576.98, 79.84, 2498.80)
+	},
+	{
+		Name = "Prison Parking",
+		Category = "Main Locations",
+		Position = Vector3.new(619.20, 95.04, 2271.20)
+	},
+	{
+		Name = "Guard Booth",
+		Category = "Main Locations",
+		Position = Vector3.new(491.26, 103.84, 2229.60)
+	},
+	{
+		Name = "Prison Gate",
+		Category = "Main Locations",
+		Position = Vector3.new(503.21, 104.13, 2217.05)
+	},
+	{
+		Name = "Gas Station",
+		Category = "Misc Locations",
+		Position = Vector3.new(-517.09, 67.79, 1647.16)
+	},
+	{
+		Name = "Warehouse 1",
+		Category = "Misc Locations",
+		Position = Vector3.new(-933.70, 104.57, 2056.55)
+	},
+	{
+		Name = "Warehouse 2",
+		Category = "Misc Locations",
+		Position = Vector3.new(-933.70, 105.15, 1920.57)
+	},
+	{
+		Name = "Car Spawner - Town",
+		Category = "Misc Locations",
+		Position = Vector3.new(-199.30, 51.69, 1872.81)
+	},
+	{
+		Name = "Car Spawner - Prison Yard",
+		Category = "Misc Locations",
+		Position = Vector3.new(631.37, 95.30, 2504.56)
+	},
+	{
+		Name = "SWAT Gun Racks",
+		Category = "Misc Locations",
+		Position = Vector3.new(847.20, 101.70, 2228.00)
+	},
+	{
+		Name = "Prison Guard Tower",
+		Category = "Misc Locations",
+		Position = Vector3.new(823.01, 108.74, 2077.80)
+	}
+}
+
+local LocationSectionFrames = {}
+
+local function TeleportToLocation(Position)
+	local Character = Player.Character
+	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+	if Root then
+		Root.CFrame = CFrame.new(Position + Vector3.new(0, 3, 0))
 	end
-end))
+end
+
+local CurrentLocationCategory = nil
+
+for _, Location in ipairs(LocationData) do
+	if CurrentLocationCategory ~= Location.Category then
+		CurrentLocationCategory = Location.Category
+		AddSection("Locations", Location.Category)
+	end
+
+	local Button = AddButton("Locations", Location.Name, function()
+		TeleportToLocation(Location.Position)
+	end)
+
+	table.insert(LocationSectionFrames, Button)
+end
+
+local LocationInfo = Instance.new("TextLabel")
+LocationInfo.Size = UDim2.new(1, -10, 0, 42)
+LocationInfo.BackgroundTransparency = 1
+LocationInfo.Text = "Do not press these to fast or you WILL get kicked  by the Anti Cheat"
+LocationInfo.TextColor3 = Theme.SubText
+LocationInfo.TextSize = 13
+LocationInfo.Font = Enum.Font.Gotham
+LocationInfo.TextWrapped = true
+LocationInfo.TextXAlignment = Enum.TextXAlignment.Left
+LocationInfo.Parent = Pages["Locations"]
 
 if Player.Character then
 	table.insert(Connections, Player.Character.ChildAdded:Connect(function(Child)
-		if Child:IsA("Tool") and Child.Name == "MP5" then
+		if Child:IsA("Tool") then
 			task.wait()
-			RefreshLocalMP5()
+			RefreshUniversalGun()
+		end
+	end))
+
+	table.insert(Connections, Player.Character.ChildRemoved:Connect(function(Child)
+		if Child == UniversalGun.EquippedGun then
+			StopUniversalGunFire()
+			task.wait()
+			RefreshUniversalGun()
 		end
 	end))
 end
 
 table.insert(Connections, Player.CharacterAdded:Connect(function(Character)
-	DisconnectMP5Connections()
+	StopUniversalGunFire()
+	DisconnectUniversalGun()
 
 	table.insert(Connections, Character.ChildAdded:Connect(function(Child)
-		if Child:IsA("Tool") and Child.Name == "MP5" then
+		if Child:IsA("Tool") then
 			task.wait()
-			RefreshLocalMP5()
+			RefreshUniversalGun()
+		end
+	end))
+
+	table.insert(Connections, Character.ChildRemoved:Connect(function(Child)
+		if Child == UniversalGun.EquippedGun then
+			StopUniversalGunFire()
+			task.wait()
+			RefreshUniversalGun()
 		end
 	end))
 
 	task.wait(1)
-	RefreshLocalMP5()
+	RefreshUniversalGun()
 end))
 
 table.insert(Connections, RunService.Heartbeat:Connect(function()
@@ -1513,19 +2116,44 @@ table.insert(Connections, RunService.Heartbeat:Connect(function()
 		return
 	end
 
-	if MP5InfiniteAmmoEnabled then
-		local MP5 = FindLocalMP5()
-		if MP5 then
-			ApplyMP5InfiniteAmmo(MP5)
-		end
+	if UniversalGun.ModifyEnabled then
+		RefreshUniversalGun()
 	end
 
-	if ActiveMP5 and ActiveMP5:GetAttribute("IsReloading") == true then
-		StopMP5TracerLoop()
+	local Tool = GetEquippedGun()
+
+	if Tool then
+		if UniversalGun.InfiniteAmmo then
+			ApplyUniversalAmmo(Tool)
+		end
+
+		if UniversalGun.InfiniteRange then
+			ApplyUniversalRange(Tool)
+		end
+
+		if UniversalGun.NoSpread then
+			ApplyUniversalNoSpread(Tool)
+		end
+
+		if UniversalGun.InstantReload then
+			ApplyUniversalReload(Tool)
+		end
+
+		if UniversalGun.FastFireRateEnabled then
+			ApplyUniversalFireRate(Tool)
+		end
+
+		if UniversalGun.Wallbang then
+			ApplyUniversalWallbang(Tool)
+		end
+
+		if Tool:GetAttribute("IsReloading") == true then
+			StopUniversalGunFire()
+		end
 	end
 end))
 
-RefreshLocalMP5()
+RefreshUniversalGun()
 
 PlayerListTitle = Instance.new("TextLabel")
 PlayerListTitle.Size = UDim2.new(1, -10, 0, 38)
